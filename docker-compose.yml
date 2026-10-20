@@ -1,14 +1,17 @@
 version: '3.8'
 
 services:
-  mongodb:
-    image: mongo:7
-    container_name: social_mongodb
+  mysql:
+    image: mysql:8.0
+    container_name: social_mysql
     restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: social_autoposter
     ports:
-      - "27017:27017"
+      - "3306:3306"
     volumes:
-      - mongo_data:/data/db
+      - mysql_data:/var/lib/mysql
 
   redis:
     image: redis:7-alpine
@@ -21,19 +24,23 @@ services:
 
   server:
     build:
-      context: .
-      dockerfile: server/Dockerfile
+      context: ./server
+      dockerfile: Dockerfile
     container_name: social_server
     restart: always
     depends_on:
-      - mongodb
+      - mysql
       - redis
     ports:
       - "5000:5000"
     env_file:
       - server/.env
     environment:
-      - MONGO_URI=mongodb://mongodb:27017/social_autoposter
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_USER=root
+      - DB_PASSWORD=root
+      - DB_NAME=social_autoposter
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - CORS_ORIGIN=http://localhost:5173
@@ -51,10 +58,10 @@ services:
     depends_on:
       - server
     ports:
-      - "5173:5173"
+      - "5173:80"
     environment:
       - VITE_API_URL=http://localhost:5000/api
 
 volumes:
-  mongo_data:
+  mysql_data:
   redis_data:

@@ -1,98 +1,167 @@
-import { BrowserRouter as Router, Routes, Route, NavLink, useNavigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
 import Upload from './pages/Upload';
+import Channels from './pages/Channels';
+import Schedule from './pages/Schedule';
+import Settings from './pages/Settings';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
-import { LogOut, Home, Upload as UploadIcon, LayoutDashboard, Mail, Key } from 'lucide-react';
+import Sidebar from './components/Sidebar';
+import EnterpriseHeader from './components/EnterpriseHeader';
 import { Toaster } from 'react-hot-toast';
 
-function ProtectedRoute({ children }) {
-  const [token, setToken] = useState(localStorage.getItem('token') || '');
-  const [checking, setChecking] = useState(true);
+function AppLayout({ children }) {
+  const [user, setUser] = useState(null);
   const navigate = useNavigate();
+  const token = localStorage.getItem('token');
 
   useEffect(() => {
-    const checkAuth = async () => {
+    if (!token) {
+      navigate('/login');
+      return;
+    }
+
+    const fetchMe = async () => {
       try {
-        //轻量 auth check via server (optional); fallback to localStorage token
-        const token = localStorage.getItem('token');
-        if (!token) {
+        const res = await fetch('/api/auth/me', {
+          headers: { Authorization: `Bearer ${token}` },
+          credentials: 'include',
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setUser(data);
+        } else if (res.status === 401) {
+          localStorage.removeItem('token');
           navigate('/login');
         }
       } catch (err) {
-        navigate('/login');
-      } finally {
-        setChecking(false);
+        console.error('Failed to load user', err);
       }
     };
-    checkAuth();
-  }, [navigate]);
 
-  if (checking) return null;
-  if (!token) return null;
-  return children;
-}
+    fetchMe();
+  }, [token, navigate]);
 
-function Navbar() {
-  const navigate = useNavigate();
-  const logout = async () => {
+  const handleLogout = async () => {
     try {
       await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
     } catch (err) {
-      console.error('Logout error', err);
+      console.error(err);
     }
     localStorage.removeItem('token');
     navigate('/login');
   };
+
+  if (!token) return null;
+
   return (
-    <nav className="bg-blue-900 text-white px-6 py-4 flex justify-between items-center shadow-lg sticky top-0 z-50">
-      <NavLink to="/" className="text-xl font-bold flex items-center gap-2" end>
-        <Home size={24} /> Social Poster
-      </NavLink>
-      <div className="flex gap-4 items-center">
-        <NavLink to="/dashboard" className="hover:text-blue-200 transition">
-          <LayoutDashboard size={22} /> Dashboard
-        </NavLink>
-        <NavLink to="/upload" className="hover:text-blue-200 transition">
-          <UploadIcon size={22} /> Upload Video
-        </NavLink>
-        <button onClick={logout} className="bg-red-600 hover:bg-red-700 px-4 py-2 rounded text-sm transition">Logout</button>
+    <div className="flex min-h-screen bg-slate-950 text-slate-100">
+      <Sidebar user={user} onLogout={handleLogout} />
+      <div className="flex-1 flex flex-col min-w-0 max-h-screen overflow-hidden">
+        <EnterpriseHeader user={user} />
+        <main className="flex-1 p-6 md:p-8 overflow-y-auto">
+          {children({ user, setUser })}
+        </main>
       </div>
-    </nav>
+    </div>
   );
 }
 
 export default function App() {
   return (
     <Router>
-      <div className="min-h-screen bg-gray-50">
-        <Toaster position="top-right" />
-        <Navbar />
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/register" element={<Register />} />
-          <Route path="/forgot-password" element={<ForgotPassword />} />
-          <Route path="/reset-password/:token" element={<ResetPassword />} />
-          <Route path="/" element={
-            <ProtectedRoute>
-              <Dashboard />
-            </ProtectedRoute>
-          } />
-          <Route path="/dashboard" element={
-            <ProtectedRoute>
-              <Dashboard />
-            </ProtectedRoute>
-          } />
-          <Route path="/upload" element={
-            <ProtectedRoute>
-              <Upload />
-            </ProtectedRoute>
-          } />
-        </Routes>
-      </div>
+      <Toaster
+        position="top-right"
+        toastOptions={{
+          style: {
+            background: '#0f172a',
+            color: '#f8fafc',
+            border: '1px solid #334155',
+            borderRadius: '12px',
+            fontSize: '13px',
+          },
+          success: {
+            iconTheme: {
+              primary: '#10b981',
+              secondary: '#0f172a',
+            },
+          },
+          error: {
+            iconTheme: {
+              primary: '#f43f5e',
+              secondary: '#0f172a',
+            },
+          },
+        }}
+      />
+      <Routes>
+        {/* Public Auth Routes */}
+        <Route path="/login" element={<Login />} />
+        <Route path="/register" element={<Register />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/reset-password/:token" element={<ResetPassword />} />
+
+        {/* Protected App Routes */}
+        <Route
+          path="/"
+          element={
+            <AppLayout>
+              {({ user }) => <Dashboard user={user} />}
+            </AppLayout>
+          }
+        />
+        <Route
+          path="/dashboard"
+          element={
+            <AppLayout>
+              {({ user }) => <Dashboard user={user} />}
+            </AppLayout>
+          }
+        />
+        <Route
+          path="/upload"
+          element={
+            <AppLayout>
+              {() => <Upload />}
+            </AppLayout>
+          }
+        />
+        <Route
+          path="/channels"
+          element={
+            <AppLayout>
+              {() => <Channels />}
+            </AppLayout>
+          }
+        />
+        <Route
+          path="/schedule"
+          element={
+            <AppLayout>
+              {() => <Schedule />}
+            </AppLayout>
+          }
+        />
+        <Route
+          path="/settings"
+          element={
+            <AppLayout>
+              {({ user, setUser }) => (
+                <Settings
+                  user={user}
+                  onProfileUpdate={(updated) => setUser(updated)}
+                />
+              )}
+            </AppLayout>
+          }
+        />
+
+        {/* Fallback */}
+        <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      </Routes>
     </Router>
   );
 }

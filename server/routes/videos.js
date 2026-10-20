@@ -1,8 +1,9 @@
-﻿const express = require('express');
+const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const path = require('path');
-const Video = require('../models/Video');
+const { Op } = require('sequelize');
+const { Video, User } = require('../models');
 const auth = require('../middleware/auth');
 
 const ALLOWED_VIDEO_TYPES = /mp4|mov|avi|mkv|webm/;
@@ -32,30 +33,87 @@ const upload = multer({
   limits: { fileSize: MAX_FILE_SIZE },
 });
 
+// Stats summary endpoint
+router.get('/stats', auth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const total = await Video.count({ where: { userId } });
+    const posted = await Video.count({ where: { userId, status: 'posted' } });
+    const pending = await Video.count({ where: { userId, status: 'pending' } });
+    const failed = await Video.count({ where: { userId, status: 'failed' } });
+
+    const videos = await Video.findAll({
+      where: { userId, status: 'posted' },
+      attributes: ['viewsCount', 'likesCount', 'sharesCount'],
+    });
+
+    const totalViews = videos.reduce((sum, v) => sum + (v.viewsCount || 0), 0);
+    const totalLikes = videos.reduce((sum, v) => sum + (v.likesCount || 0), 0);
+    const totalShares = videos.reduce((sum, v) => sum + (v.sharesCount || 0), 0);
+
+    res.json({
+      total,
+      posted,
+      pending,
+      failed,
+      totalViews,
+      totalLikes,
+      totalShares,
+    });
+  } catch (err) {
+    console.error('Stats error:', err);
+    res.status(500).json({ message: 'স্ট্যাটস লোড করতে সমস্যা হচ্ছে' });
+  }
+});
+
 router.post('/upload', auth, upload.single('video'), async (req, res) => {
   if (!req.file) return res.status(400).json({ message: 'কোনো ফাইল আপলোড করা হয়নি' });
 
-  const { title, description, platforms } = req.body;
+  const { title, description, platforms, tags, aspectRatio, scheduledAt } = req.body;
   const platformsArray = platforms
-    ? platforms.split(',').filter((p) => ['facebook', 'instagram', 'tiktok', 'youtube'].includes(p.trim()))
+    ? platforms.split(',').map((p) => p.trim()).filter((p) => ['facebook', 'instagram', 'tiktok', 'youtube'].includes(p))
     : [];
+
+  let tagsArray = [];
+  if (tags) {
+    tagsArray = typeof tags === 'string'
+      ? tags.split(',').map(t => t.trim().replace(/^#/, '')).filter(Boolean)
+      : tags;
+  }
 
   if (!title || title.trim().length === 0) {
     return res.status(400).json({ message: 'ভিডিওয়ের শিরোনাম দরকার' });
   }
 
   try {
-    const video = new Video({
-      user: req.user.id,
+    const isScheduledFuture = scheduledAt && new Date(scheduledAt).getTime() > Date.now();
+
+    const video = await Video.create({
+      userId: req.user.id,
       title: title.trim(),
       description: description ? description.trim() : '',
+      tags: tagsArray,
+      aspectRatio: aspectRatio || '9:16',
       filePath: `/uploads/${req.file.filename}`,
       platforms: platformsArray,
       status: 'pending',
+      scheduledAt: scheduledAt ? new Date(scheduledAt) : null,
     });
-    await video.save();
+
+    // Enqueue job for background posting
+    if (platformsArray.length > 0) {
+      try {
+        const { enqueuePost } = require('../worker/poster');
+        const delay = isScheduledFuture ? Math.max(0, new Date(scheduledAt).getTime() - Date.now()) : 0;
+        await enqueuePost(video.id, delay);
+      } catch (queueErr) {
+        console.warn('Queue notification on upload:', queueErr.message);
+      }
+    }
+
     res.json(video);
   } catch (err) {
+    console.error('Upload error:', err);
     res.status(500).json({ message: 'ভিডিও সেভ করতে সমস্যা হচ্ছে' });
   }
 });
@@ -65,26 +123,26 @@ router.get('/', auth, async (req, res) => {
     const { page = 1, limit = 20, search, status, platform } = req.query;
     const pageNum = parseInt(page, 10);
     const limitNum = parseInt(limit, 10);
-    const skip = (pageNum - 1) * limitNum;
+    const offset = (pageNum - 1) * limitNum;
 
-    const filter = { user: req.user.id };
+    const where = { userId: req.user.id };
 
     if (search) {
-      filter.title = { $regex: search, $options: 'i' };
+      where.title = { [Op.like]: `%${search}%` };
     }
     if (status) {
-      filter.status = status;
+      where.status = status;
     }
     if (platform) {
-      filter.platforms = platform;
+      where.platforms = { [Op.like]: `%"${platform}"%` };
     }
 
-    const videos = await Video.find(filter)
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limitNum);
-
-    const total = await Video.countDocuments(filter);
+    const { rows: videos, count: total } = await Video.findAndCountAll({
+      where,
+      order: [['createdAt', 'DESC']],
+      offset,
+      limit: limitNum,
+    });
 
     res.json({
       videos,
@@ -93,14 +151,18 @@ router.get('/', auth, async (req, res) => {
       pages: Math.ceil(total / limitNum),
     });
   } catch (err) {
+    console.error('Get videos error:', err);
     res.status(500).json({ message: 'ভিডিও লিস্ট লোড করতে সমস্যা হচ্ছে' });
   }
 });
 
-// Get single video
+// Single video
 router.get('/:id', auth, async (req, res) => {
   try {
-    const video = await Video.findOne({ _id: req.params.id, user: req.user.id });
+    const video = await Video.findOne({
+      where: { id: req.params.id, userId: req.user.id },
+      include: [{ model: User, as: 'user', attributes: ['id', 'name', 'email'] }],
+    });
     if (!video) return res.status(404).json({ message: 'ভিডিও পাওয়া যায়নি' });
     res.json(video);
   } catch (err) {
@@ -111,28 +173,33 @@ router.get('/:id', auth, async (req, res) => {
 // Update video
 router.put('/:id', auth, async (req, res) => {
   try {
-    const { title, description, platforms, scheduledAt } = req.body;
+    const { title, description, platforms, tags, aspectRatio, scheduledAt } = req.body;
+    const video = await Video.findOne({ where: { id: req.params.id, userId: req.user.id } });
+    if (!video) return res.status(404).json({ message: 'ভিডিও পাওয়া যায়নি' });
+
     const update = {};
     if (title !== undefined) update.title = title.trim();
     if (description !== undefined) update.description = description.trim();
+    if (tags !== undefined) {
+      update.tags = Array.isArray(tags) ? tags : String(tags).split(',').map(t => t.trim().replace(/^#/, '')).filter(Boolean);
+    }
+    if (aspectRatio !== undefined) update.aspectRatio = aspectRatio;
     if (platforms !== undefined) {
       const allowed = ['facebook', 'instagram', 'tiktok', 'youtube'];
       update.platforms = platforms.filter((p) => allowed.includes(p));
     }
-    if (scheduledAt !== undefined) update.scheduledAt = new Date(scheduledAt);
+    if (scheduledAt !== undefined) update.scheduledAt = scheduledAt ? new Date(scheduledAt) : null;
 
-    const video = await Video.findOneAndUpdate(
-      { _id: req.params.id, user: req.user.id },
-      update,
-      { new: true }
-    );
-    if (!video) return res.status(404).json({ message: 'ভিডিও পাওয়া যায়নি' });
+    await video.update(update);
 
-    // If scheduled, enqueue with delay
     if (scheduledAt && video.status === 'pending') {
-      const { enqueuePost } = require('../worker/poster');
-      const delay = new Date(scheduledAt).getTime() - Date.now();
-      if (delay > 0) await enqueuePost(video._id, delay);
+      try {
+        const { enqueuePost } = require('../worker/poster');
+        const delay = new Date(scheduledAt).getTime() - Date.now();
+        if (delay > 0) await enqueuePost(video.id, delay);
+      } catch (queueErr) {
+        console.warn('Queue notification on schedule:', queueErr.message);
+      }
     }
 
     res.json(video);
@@ -144,26 +211,36 @@ router.put('/:id', auth, async (req, res) => {
 // Delete video
 router.delete('/:id', auth, async (req, res) => {
   try {
-    const video = await Video.findOneAndDelete({ _id: req.params.id, user: req.user.id });
+    const video = await Video.findOne({ where: { id: req.params.id, userId: req.user.id } });
     if (!video) return res.status(404).json({ message: 'ভিডিও পাওয়া যায়নি' });
+
+    await video.destroy();
     res.json({ message: 'ভিডিও ডিলিট করা হয়েছে' });
   } catch (err) {
     res.status(500).json({ message: 'ভিডিও ডিলিট করতে সমস্যা হচ্ছে' });
   }
 });
 
-// Re-post / retry a failed video
+// Retry video
 router.post('/:id/retry', auth, async (req, res) => {
   try {
-    const video = await Video.findOne({ _id: req.params.id, user: req.user.id }).populate('user');
+    const video = await Video.findOne({
+      where: { id: req.params.id, userId: req.user.id },
+      include: [{ model: User, as: 'user' }],
+    });
     if (!video) return res.status(404).json({ message: 'ভিডিও পাওয়া যায়নি' });
 
-    video.status = 'pending';
-    video.postedAt = null;
-    await video.save();
+    await video.update({
+      status: 'pending',
+      postedAt: null,
+    });
 
-    const { enqueuePost } = require('../worker/poster');
-    await enqueuePost(video._id, 0);
+    try {
+      const { enqueuePost } = require('../worker/poster');
+      await enqueuePost(video.id, 0);
+    } catch (queueErr) {
+      console.warn('Queue notification on retry:', queueErr.message);
+    }
 
     res.json({ message: 'পুনরায় পোস্ট করার জন্য কিউয়ে যোগ করা হয়েছে', video });
   } catch (err) {

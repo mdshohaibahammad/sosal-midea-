@@ -3,8 +3,7 @@ const cors = require('cors');
 const dotenv = require('dotenv');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-const mongoSanitize = require('express-mongo-sanitize');
-const connectDB = require('./config/db');
+const { connectDB } = require('./config/db');
 const authRoutes = require('./routes/auth');
 const videoRoutes = require('./routes/videos');
 const socialRoutes = require('./routes/social');
@@ -38,30 +37,31 @@ app.use(
   })
 );
 
+const isDev = process.env.NODE_ENV === 'development';
+
 // Rate limiting (general)
 const generalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
+  windowMs: 15 * 60 * 1000,
+  max: isDev ? 2000 : 100,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { message: 'অনুরোধের määrä খুব বেশি, কিছুক্ষণ পর চেষ্টা করুন' },
+  message: { message: 'Too many requests, please try again in a few minutes' },
 });
 app.use(generalLimiter);
 
-// Stricter limiter for auth routes
+// Auth limiter
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 20,
+  max: isDev ? 1000 : 30,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { message: 'অথরাইজেশন রoute-এর জন্য অধিক অরোহণ, পরে চেষ্টা করুন' },
+  message: { message: 'Too many login attempts, please try again later' },
 });
 
-// Body parsing & sanitization
+// Body parsing
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
-app.use(mongoSanitize()); // Prevent NoSQL injection
 
 // CORS
 app.use(

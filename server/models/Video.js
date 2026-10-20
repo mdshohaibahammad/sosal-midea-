@@ -1,15 +1,92 @@
-const mongoose = require('mongoose');
+const { DataTypes, Model } = require('sequelize');
+const { sequelize } = require('../config/db');
 
-const videoSchema = new mongoose.Schema({
-  user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  title: { type: String, required: true },
-  description: { type: String },
-  filePath: { type: String, required: true },
-  platforms: [{ type: String, enum: ['facebook','instagram','tiktok','youtube'], default: [] }],
-  status: { type: String, enum: ['pending','posted','failed'], default: 'pending' },
-  scheduledAt: { type: Date },
-  postedAt: { type: Date },
-  createdAt: { type: Date, default: Date.now }
-});
+class Video extends Model {
+  toJSON() {
+    const values = { ...this.get() };
+    values._id = values.id;
+    return values;
+  }
+}
 
-module.exports = mongoose.model('Video', videoSchema);
+Video.init(
+  {
+    id: {
+      type: DataTypes.INTEGER,
+      autoIncrement: true,
+      primaryKey: true,
+    },
+    userId: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      references: {
+        model: 'users',
+        key: 'id',
+      },
+    },
+    title: {
+      type: DataTypes.STRING,
+      allowNull: false,
+    },
+    description: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
+    tags: {
+      type: DataTypes.JSON,
+      defaultValue: [],
+    },
+    filePath: {
+      type: DataTypes.STRING,
+      allowNull: false,
+    },
+    thumbnailUrl: {
+      type: DataTypes.STRING,
+      defaultValue: '',
+    },
+    aspectRatio: {
+      type: DataTypes.STRING,
+      defaultValue: '9:16',
+    },
+    platforms: {
+      type: DataTypes.JSON,
+      defaultValue: [],
+    },
+    status: {
+      type: DataTypes.ENUM('draft', 'pending', 'posting', 'posted', 'failed'),
+      defaultValue: 'pending',
+    },
+    platformResults: {
+      type: DataTypes.JSON,
+      defaultValue: {},
+    },
+    scheduledAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    postedAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    viewsCount: {
+      type: DataTypes.INTEGER,
+      defaultValue: 0,
+    },
+    likesCount: {
+      type: DataTypes.INTEGER,
+      defaultValue: 0,
+    },
+    sharesCount: {
+      type: DataTypes.INTEGER,
+      defaultValue: 0,
+    },
+  },
+  {
+    sequelize,
+    modelName: 'Video',
+    tableName: 'videos',
+    timestamps: true,
+  }
+);
+
+module.exports = Video;

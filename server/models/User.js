@@ -1,29 +1,90 @@
-const mongoose = require('mongoose');
+const { DataTypes, Model } = require('sequelize');
 const bcrypt = require('bcryptjs');
+const { sequelize } = require('../config/db');
 
-const userSchema = new mongoose.Schema({
-  name: { type: String, required: true },
-  email: { type: String, required: true, unique: true },
-  password: { type: String, required: true },
-  socialTokens: {
-    facebook: { accessToken: String, expiresAt: Date },
-    instagram: { accessToken: String, expiresAt: Date },
-    tiktok: { accessToken: String, expiresAt: Date },
-    youtube: { accessToken: String, expiresAt: Date }
+class User extends Model {
+  async matchPassword(enteredPassword) {
+    return await bcrypt.compare(enteredPassword, this.password);
+  }
+
+  toJSON() {
+    const values = { ...this.get() };
+    values._id = values.id;
+    delete values.password;
+    return values;
+  }
+}
+
+User.init(
+  {
+    id: {
+      type: DataTypes.INTEGER,
+      autoIncrement: true,
+      primaryKey: true,
+    },
+    name: {
+      type: DataTypes.STRING,
+      allowNull: false,
+    },
+    email: {
+      type: DataTypes.STRING,
+      allowNull: false,
+      unique: true,
+      validate: {
+        isEmail: true,
+      },
+    },
+    password: {
+      type: DataTypes.STRING,
+      allowNull: false,
+    },
+    avatar: {
+      type: DataTypes.STRING,
+      defaultValue: '',
+    },
+    role: {
+      type: DataTypes.STRING,
+      defaultValue: 'user',
+    },
+    socialTokens: {
+      type: DataTypes.JSON,
+      defaultValue: {
+        facebook: null,
+        instagram: null,
+        tiktok: null,
+        youtube: null,
+      },
+    },
+    settings: {
+      type: DataTypes.JSON,
+      defaultValue: {
+        autoRetry: true,
+        notifyOnPost: true,
+        theme: 'dark',
+      },
+    },
+    resetPasswordToken: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
+    resetPasswordExpires: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
   },
-  createdAt: { type: Date, default: Date.now },
-  resetPasswordToken: { type: String },
-  resetPasswordExpires: { type: Date },
-});
+  {
+    sequelize,
+    modelName: 'User',
+    tableName: 'users',
+    timestamps: true,
+    hooks: {
+      beforeSave: async (user) => {
+        if (user.changed('password')) {
+          user.password = await bcrypt.hash(user.password, 10);
+        }
+      },
+    },
+  }
+);
 
-userSchema.pre('save', async function (next) {
-  if (!this.isModified('password')) return next();
-  this.password = await bcrypt.hash(this.password, 10);
-  next();
-});
-
-userSchema.methods.matchPassword = async function (enteredPassword) {
-  return await bcrypt.compare(enteredPassword, this.password);
-};
-
-module.exports = mongoose.model('User', userSchema);
+module.exports = User;
