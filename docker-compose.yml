@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:7
+    container_name: social_mongodb
+    restart: always
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+  redis:
+    image: redis:7-alpine
+    container_name: social_redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  server:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    container_name: social_server
+    restart: always
+    depends_on:
+      - mongodb
+      - redis
+    ports:
+      - "5000:5000"
+    env_file:
+      - server/.env
+    environment:
+      - MONGO_URI=mongodb://mongodb:27017/social_autoposter
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - CORS_ORIGIN=http://localhost:5173
+      - BASE_URL=http://localhost:5000
+      - NODE_ENV=production
+    volumes:
+      - ./server/uploads:/app/uploads
+
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: social_client
+    restart: always
+    depends_on:
+      - server
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_URL=http://localhost:5000/api
+
+volumes:
+  mongo_data:
+  redis_data:
